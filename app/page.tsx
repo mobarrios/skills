@@ -7,7 +7,7 @@ type Position = "ARQ" | "DEF" | "MED" | "DEL"
 type Group = { id: string; name: string }
 type Player = { id: string; name: string; groups: string[]; positions: Position[]; active: boolean }
 type Skill = { id: string; label: string; weight: number }
-type Evaluation = { id: string; playerId: string; groupId: string; month: string; scores: Record<string, number>; updatedAt: string }
+type Evaluation = { id: string; playerId: string; groupId: string; month: string; scores: Record<string, number>; updatedAt: string; raterIp?: string }
 type TeamPlayer = { player: Player; rating: number }
 type GeneratedTeams = { teamA: TeamPlayer[]; teamB: TeamPlayer[]; totalA: number; totalB: number; averageA: number; averageB: number }
 
@@ -101,6 +101,23 @@ function round(value: number) {
   return Math.round(value * 10) / 10
 }
 
+function median(values: number[]) {
+  const ordered = [...values].sort((a, b) => a - b)
+  const middle = Math.floor(ordered.length / 2)
+
+  return ordered.length % 2 ? ordered[middle] : (ordered[middle - 1] + ordered[middle]) / 2
+}
+
+function normalizeSkillValues(values: number[]) {
+  if (values.length < 3) return values
+
+  const center = median(values)
+  const min = center - 1
+  const max = center + 1
+
+  return values.map((value) => Math.min(Math.max(value, min), max))
+}
+
 function getRating(scores: Record<string, number>) {
   const totalWeight = SKILLS.reduce((sum, skill) => sum + skill.weight, 0)
   const weightedTotal = SKILLS.reduce((sum, skill) => sum + (scores[skill.id] || 0) * skill.weight, 0)
@@ -111,8 +128,9 @@ function getAverageScores(items: Evaluation[]) {
   if (!items.length) return null
 
   return Object.fromEntries(SKILLS.map((skill) => {
-    const total = items.reduce((sum, evaluation) => sum + (evaluation.scores[skill.id] || 0), 0)
-    return [skill.id, round(total / items.length)]
+    const values = normalizeSkillValues(items.map((evaluation) => evaluation.scores[skill.id] || 0))
+    const total = values.reduce((sum, value) => sum + value, 0)
+    return [skill.id, round(total / values.length)]
   })) as Record<string, number>
 }
 
@@ -502,6 +520,7 @@ export default function Home() {
       await persist("evaluation", "upsert", evaluation)
       setSyncError("")
     } catch (error) {
+      setEvaluations((current) => current.filter((item) => item.id !== evaluation.id))
       setSyncError((error as Error).message)
       setSavedMessage("")
     }

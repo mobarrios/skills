@@ -1,5 +1,5 @@
 import { MongoClient, type Db } from "mongodb"
-import { NextResponse } from "next/server"
+import { NextResponse, type NextRequest } from "next/server"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -15,6 +15,7 @@ type Evaluation = {
   month: string
   scores: Record<string, number>
   updatedAt: string
+  raterIp?: string
 }
 
 type Payload = {
@@ -25,6 +26,7 @@ type Payload = {
 
 const uri = process.env.MONGODB_URI
 const dbName = process.env.MONGODB_DB || "futbol_amateur"
+const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000
 
 const globalForMongo = globalThis as unknown as { _mongoClientPromise?: Promise<MongoClient> }
 
@@ -66,6 +68,11 @@ async function getDb(): Promise<Db> {
   }
 }
 
+function getRequestIp(request: NextRequest) {
+  const forwardedFor = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+  return forwardedFor || request.headers.get("x-real-ip") || request.headers.get("cf-connecting-ip") || "local"
+}
+
 export async function GET() {
   try {
     const db = await getDb()
@@ -81,7 +88,7 @@ export async function GET() {
   }
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as Payload
     if (!body?.type || !body?.action || !body?.data?.id) {
@@ -105,6 +112,30 @@ export async function POST(request: Request) {
       }
     } else {
       const { id, ...rest } = body.data
+
+      if (body.type === "evaluation") {
+        const raterIp = getRequestIp(request)
+        const playerId = body.data.playerId
+        if (!playerId) {
+          return NextResponse.json({ error: "Falta el jugador de la clasificacion" }, { status: 400 })
+        }
+
+        const oneWeekAgo = new Date(Date.now() - ONE_WEEK_MS).toISOString()
+        const recentEvaluation = await db.collection<Evaluation>("evaluations").findOne({
+          id: { $ne: id },
+          playerId,
+          raterIp,
+          updatedAt: { $gte: oneWeekAgo },
+        })
+
+        if (recentEvaluation) {
+          return NextResponse.json({ error: "Ya se guardo una clasificacion para este jugador desde esta IP durante los ultimos 7 dias" }, { status: 429 })
+        }
+
+        await collection.updateOne({ id }, { $set: { id, ...rest, raterIp } }, { upsert: true })
+        return NextResponse.json({ ok: true })
+      }
+
       await collection.updateOne({ id }, { $set: { id, ...rest } }, { upsert: true })
     }
 
@@ -113,4 +144,3 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: (error as Error).message }, { status: 500 })
   }
 }
-
