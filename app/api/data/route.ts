@@ -4,9 +4,11 @@ import { NextResponse, type NextRequest } from "next/server"
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
 
-type Position = "ARQ" | "DEF" | "MED" | "DEL"
+type Position = string
 
-type Group = { id: string; name: string }
+type Skill = { id: string; label: string; weight: number; detail?: string }
+type Sport = { id: string; name: string; skills: Skill[]; positions?: Position[] }
+type Group = { id: string; name: string; sportId?: string }
 type Player = { id: string; name: string; groups: string[]; positions: Position[]; active: boolean }
 type Evaluation = {
   id: string
@@ -19,9 +21,9 @@ type Evaluation = {
 }
 
 type Payload = {
-  type: "group" | "player" | "evaluation"
+  type: "sport" | "group" | "player" | "evaluation"
   action: "upsert" | "delete"
-  data: Partial<Group & Player & Evaluation> & { id: string }
+  data: Partial<Sport & Group & Player & Evaluation> & { id: string }
 }
 
 const uri = process.env.MONGODB_URI
@@ -76,13 +78,14 @@ function getRequestIp(request: NextRequest) {
 export async function GET() {
   try {
     const db = await getDb()
-    const [groups, players, evaluations] = await Promise.all([
+    const [sports, groups, players, evaluations] = await Promise.all([
+      db.collection<Sport>("sports").find({}, { projection: { _id: 0 } }).toArray(),
       db.collection<Group>("groups").find({}, { projection: { _id: 0 } }).toArray(),
       db.collection<Player>("players").find({}, { projection: { _id: 0 } }).toArray(),
       db.collection<Evaluation>("evaluations").find({}, { projection: { _id: 0 } }).toArray(),
     ])
 
-    return NextResponse.json({ groups, players, evaluations })
+    return NextResponse.json({ sports, groups, players, evaluations })
   } catch (error) {
     return NextResponse.json({ error: (error as Error).message }, { status: 500 })
   }
@@ -95,7 +98,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Payload invalido" }, { status: 400 })
     }
 
-    const collections = { group: "groups", player: "players", evaluation: "evaluations" } as const
+    const collections = { sport: "sports", group: "groups", player: "players", evaluation: "evaluations" } as const
     const db = await getDb()
     const collection = db.collection(collections[body.type])
 
@@ -109,6 +112,10 @@ export async function POST(request: NextRequest) {
 
       if (body.type === "player") {
         await db.collection("evaluations").deleteMany({ playerId: body.data.id })
+      }
+
+      if (body.type === "sport") {
+        await db.collection<Group>("groups").updateMany({ sportId: body.data.id }, { $unset: { sportId: "" } })
       }
     } else {
       const { id, ...rest } = body.data

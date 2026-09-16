@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 
-type Position = "ARQ" | "DEF" | "MED" | "DEL"
+type Position = string
 
-type Group = { id: string; name: string }
+type Group = { id: string; name: string; sportId?: string }
 type Player = { id: string; name: string; groups: string[]; positions: Position[]; active: boolean }
-type Skill = { id: string; label: string; weight: number }
+type Skill = { id: string; label: string; weight: number; detail?: string }
+type Sport = { id: string; name: string; skills: Skill[]; positions?: Position[] }
 type Evaluation = { id: string; playerId: string; groupId: string; month: string; scores: Record<string, number>; updatedAt: string; raterIp?: string }
 type TeamPlayer = { player: Player; rating: number }
 type GeneratedTeams = { teamA: TeamPlayer[]; teamB: TeamPlayer[]; totalA: number; totalB: number; averageA: number; averageB: number }
@@ -17,22 +18,32 @@ type PlayerForm = {
   groups: string[]
 }
 
-const POSITIONS: Position[] = ["ARQ", "DEF", "MED", "DEL"]
+type SportForm = {
+  name: string
+  skills: Skill[]
+  positions: Position[]
+}
 
-const SKILLS: Skill[] = [
-  { id: "tecnica", label: "Tecnica", weight: 15 },
-  { id: "pase", label: "Pase", weight: 12 },
-  { id: "marca", label: "Marca", weight: 12 },
-  { id: "velocidad", label: "Velocidad", weight: 10 },
-  { id: "resistencia", label: "Resistencia", weight: 10 },
-  { id: "definicion", label: "Definicion", weight: 12 },
-  { id: "vision", label: "Vision", weight: 10 },
-  { id: "arquero", label: "Arquero", weight: 6 },
-  { id: "actitud", label: "Actitud", weight: 8 },
-  { id: "fisico", label: "Fisico", weight: 5 },
+const DEFAULT_POSITIONS: Position[] = ["ARQ", "DEF", "MED", "DEL"]
+const DEFAULT_SPORT_ID = "futbol"
+
+const DEFAULT_SKILLS: Skill[] = [
+  { id: "tecnica", label: "Tecnica", weight: 15, detail: "Control de pelota, gambeta y recursos tecnicos." },
+  { id: "pase", label: "Pase", weight: 12, detail: "Precision, criterio y velocidad para entregar la pelota." },
+  { id: "marca", label: "Marca", weight: 12, detail: "Capacidad para recuperar, presionar y sostener duelos." },
+  { id: "velocidad", label: "Velocidad", weight: 10, detail: "Rapidez en carrera, reaccion y cambios de ritmo." },
+  { id: "resistencia", label: "Resistencia", weight: 10, detail: "Mantener intensidad durante todo el partido." },
+  { id: "definicion", label: "Definicion", weight: 12, detail: "Efectividad para terminar jugadas y convertir." },
+  { id: "vision", label: "Vision", weight: 10, detail: "Lectura de juego, decisiones y pases que generan ventaja." },
+  { id: "arquero", label: "Arquero", weight: 6, detail: "Rendimiento atajando cuando le toca ir al arco." },
+  { id: "actitud", label: "Actitud", weight: 8, detail: "Compromiso, solidaridad y competitividad." },
+  { id: "fisico", label: "Fisico", weight: 5, detail: "Fuerza, potencia y estado fisico general." },
 ]
 
+const DEFAULT_SPORTS: Sport[] = [{ id: DEFAULT_SPORT_ID, name: "Futbol", skills: DEFAULT_SKILLS, positions: DEFAULT_POSITIONS }]
+
 const blankPlayerForm = (): PlayerForm => ({ name: "", positions: [], groups: [] })
+const blankSportForm = (): SportForm => ({ name: "", skills: [], positions: [] })
 
 const GROUP_PARAM = "grupo"
 const PLAYER_PARAM = "jugador"
@@ -93,8 +104,12 @@ function formatMonth(month: string) {
   return `${monthNumber}/${year}`
 }
 
-function emptyScores() {
-  return Object.fromEntries(SKILLS.map((skill) => [skill.id, 3])) as Record<string, number>
+function emptyScores(skills: Skill[] = DEFAULT_SKILLS) {
+  return Object.fromEntries(skills.map((skill) => [skill.id, 3])) as Record<string, number>
+}
+
+function skillTotal(skills: Skill[]) {
+  return skills.reduce((sum, skill) => sum + (Number.isFinite(skill.weight) ? skill.weight : 0), 0)
 }
 
 function round(value: number) {
@@ -118,17 +133,17 @@ function normalizeSkillValues(values: number[]) {
   return values.map((value) => Math.min(Math.max(value, min), max))
 }
 
-function getRating(scores: Record<string, number>) {
-  const totalWeight = SKILLS.reduce((sum, skill) => sum + skill.weight, 0)
-  const weightedTotal = SKILLS.reduce((sum, skill) => sum + (scores[skill.id] || 0) * skill.weight, 0)
+function getRating(scores: Record<string, number>, skills: Skill[]) {
+  const totalWeight = skillTotal(skills)
+  const weightedTotal = skills.reduce((sum, skill) => sum + (scores[skill.id] ?? 3) * skill.weight, 0)
   return totalWeight ? round((weightedTotal / totalWeight) * 20) : 0
 }
 
-function getAverageScores(items: Evaluation[]) {
+function getAverageScores(items: Evaluation[], skills: Skill[]) {
   if (!items.length) return null
 
-  return Object.fromEntries(SKILLS.map((skill) => {
-    const values = normalizeSkillValues(items.map((evaluation) => evaluation.scores[skill.id] || 0))
+  return Object.fromEntries(skills.map((skill) => {
+    const values = normalizeSkillValues(items.map((evaluation) => evaluation.scores[skill.id] ?? 3))
     const total = values.reduce((sum, value) => sum + value, 0)
     return [skill.id, round(total / values.length)]
   })) as Record<string, number>
@@ -147,10 +162,10 @@ function latestPlayerEvaluation(playerId: string, evaluations: Evaluation[]) {
     .sort((a, b) => b.month.localeCompare(a.month) || b.updatedAt.localeCompare(a.updatedAt))[0]
 }
 
-function latestPlayerRating(playerId: string, evaluations: Evaluation[]) {
-  const averageScores = getAverageScores(evaluations.filter((evaluation) => evaluation.playerId === playerId))
+function latestPlayerRating(playerId: string, evaluations: Evaluation[], skills: Skill[]) {
+  const averageScores = getAverageScores(evaluations.filter((evaluation) => evaluation.playerId === playerId), skills)
 
-  return averageScores ? getRating(averageScores) : 50
+  return averageScores ? getRating(averageScores, skills) : 50
 }
 
 function shuffle<T>(items: T[]) {
@@ -164,14 +179,14 @@ function positionPenalty(team: TeamPlayer[], player: TeamPlayer) {
   }, 0)
 }
 
-function buildRandomTeams(players: Player[], evaluations: Evaluation[], groupId: string, playersPerTeam: number): GeneratedTeams | null {
+function buildRandomTeams(players: Player[], evaluations: Evaluation[], skills: Skill[], playersPerTeam: number): GeneratedTeams | null {
   const selected = shuffle(players).slice(0, playersPerTeam * 2)
   if (selected.length < 4) return null
 
   const teamSizeA = playersPerTeam
   const teamSizeB = playersPerTeam
   const ordered = shuffle(selected)
-    .map((player) => ({ player, rating: latestPlayerRating(player.id, evaluations) }))
+    .map((player) => ({ player, rating: latestPlayerRating(player.id, evaluations, skills) }))
     .sort((a, b) => b.rating - a.rating)
   const teamA: TeamPlayer[] = []
   const teamB: TeamPlayer[] = []
@@ -199,7 +214,7 @@ function buildRandomTeams(players: Player[], evaluations: Evaluation[], groupId:
   }
 }
 
-async function persist(type: "group" | "player" | "evaluation", action: "upsert" | "delete", data: { id: string } & Record<string, unknown>) {
+async function persist(type: "sport" | "group" | "player" | "evaluation", action: "upsert" | "delete", data: { id: string } & Record<string, unknown>) {
   const response = await fetch("/api/data", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -213,6 +228,7 @@ async function persist(type: "group" | "player" | "evaluation", action: "upsert"
 }
 
 export default function Home() {
+  const [sports, setSports] = useState<Sport[]>(DEFAULT_SPORTS)
   const [groups, setGroups] = useState<Group[]>([])
   const [players, setPlayers] = useState<Player[]>([])
   const [evaluations, setEvaluations] = useState<Evaluation[]>([])
@@ -221,9 +237,14 @@ export default function Home() {
   const [scores, setScores] = useState<Record<string, number>>(emptyScores)
   const [search, setSearch] = useState("")
   const [groupForm, setGroupForm] = useState("")
+  const [groupSportId, setGroupSportId] = useState(DEFAULT_SPORT_ID)
   const [editingGroupId, setEditingGroupId] = useState("")
   const [playerForm, setPlayerForm] = useState<PlayerForm>(blankPlayerForm)
   const [editingPlayerId, setEditingPlayerId] = useState("")
+  const [sportForm, setSportForm] = useState<SportForm>(blankSportForm)
+  const [editingSportId, setEditingSportId] = useState("")
+  const [skillForm, setSkillForm] = useState({ label: "", weight: "", detail: "" })
+  const [positionForm, setPositionForm] = useState("")
   const [savedMessage, setSavedMessage] = useState("")
   const [screen, setScreen] = useState<"home" | "group" | "player">("home")
   const [playersPerTeam, setPlayersPerTeam] = useState(5)
@@ -236,6 +257,13 @@ export default function Home() {
 
   const month = currentMonth()
   const group = groups.find((item) => item.id === groupId) || groups[0]
+  const availableSports = sports.length ? sports : DEFAULT_SPORTS
+  const validSports = availableSports.filter((sport) => sport.skills.length > 0 && (sport.positions?.length || 0) > 0 && skillTotal(sport.skills) === 100)
+  const groupSport = availableSports.find((sport) => sport.id === (group?.sportId || DEFAULT_SPORT_ID)) || availableSports[0] || DEFAULT_SPORTS[0]
+  const groupSkills = groupSport.skills.length ? groupSport.skills : DEFAULT_SKILLS
+  const groupPositions = groupSport.positions?.length ? groupSport.positions : DEFAULT_POSITIONS
+  const sportFormTotal = skillTotal(sportForm.skills)
+  const canSaveSport = sportForm.name.trim().length > 0 && sportForm.skills.length > 0 && sportForm.positions.length > 0 && sportFormTotal === 100
   const groupPlayers = useMemo(() => players.filter((player) => player.groups.includes(groupId)), [players, groupId])
   const filteredPlayers = groupPlayers.filter((player) => {
     const query = search.trim().toLowerCase()
@@ -244,30 +272,30 @@ export default function Home() {
   const selectedPlayer = groupPlayers.find((player) => player.id === selectedPlayerId)
   const playerEvaluations = evaluations.filter((evaluation) => evaluation.playerId === selectedPlayer?.id)
   const classificationCount = playerEvaluations.length
-  const averageScores = getAverageScores(playerEvaluations)
+  const averageScores = getAverageScores(playerEvaluations, groupSkills)
   const latestEvaluation = selectedPlayer ? latestPlayerEvaluation(selectedPlayer.id, evaluations) : undefined
-  const currentRating = averageScores ? getRating(averageScores) : 0
-  const formRating = useMemo(() => getRating(scores), [scores])
+  const currentRating = averageScores ? getRating(averageScores, groupSkills) : 0
+  const formRating = useMemo(() => getRating(scores, groupSkills), [scores, groupSkills])
   const ranking = useMemo(() => {
     return groupPlayers
       .map((player) => {
         const count = evaluations.filter((evaluation) => evaluation.playerId === player.id).length
         const latest = latestPlayerEvaluation(player.id, evaluations)
-        const average = getAverageScores(evaluations.filter((evaluation) => evaluation.playerId === player.id))
-        return { player, rating: average ? getRating(average) : 0, month: latest?.month || "", groupId: latest?.groupId || "", count }
+        const average = getAverageScores(evaluations.filter((evaluation) => evaluation.playerId === player.id), groupSkills)
+        return { player, rating: average ? getRating(average, groupSkills) : 0, month: latest?.month || "", groupId: latest?.groupId || "", count }
       })
       .sort((a, b) => b.rating - a.rating || a.player.name.localeCompare(b.player.name))
-  }, [evaluations, groupId, groupPlayers])
+  }, [evaluations, groupId, groupPlayers, groupSkills])
   const playerHistory = useMemo(() => {
     return [...playerEvaluations]
       .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))
       .map((evaluation, index) => ({
         evaluation,
         index: index + 1,
-        rating: getRating(evaluation.scores),
+        rating: getRating(evaluation.scores, groupSkills),
         groupName: groups.find((item) => item.id === evaluation.groupId)?.name || "Grupo borrado",
       }))
-  }, [playerEvaluations, groups])
+  }, [playerEvaluations, groups, groupSkills])
   const historyBest = playerHistory.length ? Math.max(...playerHistory.map((item) => item.rating)) : 0
   const historyWorst = playerHistory.length ? Math.min(...playerHistory.map((item) => item.rating)) : 0
   const selectedTeamPlayers = groupPlayers.filter((player) => selectedTeamPlayerIds.includes(player.id))
@@ -280,12 +308,18 @@ export default function Home() {
     async function load() {
       try {
         const response = await fetch("/api/data", { cache: "no-store" })
-        const data = (await response.json()) as { groups: Group[]; players: Player[]; evaluations: Evaluation[]; error?: string }
+        const data = (await response.json()) as { sports: Sport[]; groups: Group[]; players: Player[]; evaluations: Evaluation[]; error?: string }
         if (!response.ok) throw new Error(data.error || "No se pudo leer la base de datos")
 
         if (cancelled) return
 
-        setGroups(data.groups || [])
+        const nextSports = data.sports?.length ? data.sports : DEFAULT_SPORTS
+        const normalizedSports = nextSports.map((sport) => ({
+          ...sport,
+          positions: sport.positions?.length ? sport.positions : (sport.id === DEFAULT_SPORT_ID ? DEFAULT_POSITIONS : []),
+        }))
+        setSports(normalizedSports.some((sport) => sport.id === DEFAULT_SPORT_ID) ? normalizedSports : [...DEFAULT_SPORTS, ...normalizedSports])
+        setGroups((data.groups || []).map((item) => ({ ...item, sportId: item.sportId || DEFAULT_SPORT_ID })))
         setPlayers(data.players || [])
         setEvaluations(data.evaluations || [])
         setSyncError("")
@@ -373,9 +407,9 @@ export default function Home() {
   }, [groupPlayers, selectedPlayerId, screen, groupId])
 
   useEffect(() => {
-    setScores(latestEvaluation?.scores || emptyScores())
+    setScores({ ...emptyScores(groupSkills), ...(latestEvaluation?.scores || {}) })
     setSavedMessage("")
-  }, [latestEvaluation?.id, selectedPlayer?.id, groupId])
+  }, [latestEvaluation?.id, selectedPlayer?.id, groupId, groupSkills])
 
   useEffect(() => {
     if (groupPlayers.length < 4) {
@@ -401,10 +435,14 @@ export default function Home() {
   async function saveGroup() {
     const name = groupForm.trim()
     if (!name) return
+    if (!validSports.some((sport) => sport.id === groupSportId)) {
+      setSyncError("Elegí un deporte con skills que sumen exactamente 100%")
+      return
+    }
 
     const nextGroup: Group = editingGroupId
-      ? { id: editingGroupId, name }
-      : { id: groups.some((item) => item.id === makeId(name)) ? `${makeId(name)}-${Date.now()}` : makeId(name), name }
+      ? { id: editingGroupId, name, sportId: groupSportId }
+      : { id: groups.some((item) => item.id === makeId(name)) ? `${makeId(name)}-${Date.now()}` : makeId(name), name, sportId: groupSportId }
 
     setGroups((current) => (
       current.some((item) => item.id === nextGroup.id)
@@ -412,6 +450,7 @@ export default function Home() {
         : [...current, nextGroup]
     ))
     setGroupForm("")
+    setGroupSportId(DEFAULT_SPORT_ID)
     setEditingGroupId("")
 
     try {
@@ -424,6 +463,7 @@ export default function Home() {
 
   function editGroup(item: Group) {
     setGroupForm(item.name)
+    setGroupSportId(item.sportId || DEFAULT_SPORT_ID)
     setEditingGroupId(item.id)
   }
 
@@ -445,11 +485,12 @@ export default function Home() {
     if (!name) return
 
     const baseId = makeId(name)
+    const assignedGroups = screen === "group" && groupId ? Array.from(new Set([...playerForm.groups, groupId])) : playerForm.groups
     const nextPlayer: Player = {
       id: editingPlayerId || (players.some((player) => player.id === baseId) ? `${baseId}-${Date.now()}` : baseId),
       name,
       positions: playerForm.positions,
-      groups: playerForm.groups,
+      groups: assignedGroups,
       active: true,
     }
 
@@ -486,6 +527,101 @@ export default function Home() {
     }
   }
 
+  function startNewSport() {
+    setSportForm(blankSportForm())
+    setEditingSportId("")
+    setSkillForm({ label: "", weight: "", detail: "" })
+    setPositionForm("")
+  }
+
+  function editSport(sport: Sport) {
+    setSportForm({ name: sport.name, skills: sport.skills, positions: sport.positions?.length ? sport.positions : (sport.id === DEFAULT_SPORT_ID ? DEFAULT_POSITIONS : []) })
+    setEditingSportId(sport.id)
+    setSkillForm({ label: "", weight: "", detail: "" })
+    setPositionForm("")
+  }
+
+  function addPositionToSport() {
+    const position = positionForm.trim().toUpperCase()
+    if (!position) return
+
+    setSportForm((current) => ({
+      ...current,
+      positions: current.positions.includes(position) ? current.positions : [...current.positions, position],
+    }))
+    setPositionForm("")
+  }
+
+  function deleteSportPosition(position: Position) {
+    setSportForm((current) => ({ ...current, positions: current.positions.filter((item) => item !== position) }))
+  }
+
+  function addSkillToSport() {
+    const label = skillForm.label.trim()
+    const weight = Number(skillForm.weight)
+    const detail = skillForm.detail.trim()
+    if (!label || !Number.isFinite(weight) || weight <= 0) return
+
+    const id = sportForm.skills.some((skill) => skill.id === makeId(label)) ? `${makeId(label)}-${Date.now()}` : makeId(label)
+    setSportForm((current) => ({ ...current, skills: [...current.skills, { id, label, weight, detail }] }))
+    setSkillForm({ label: "", weight: "", detail: "" })
+  }
+
+  function updateSportSkill(id: string, patch: Partial<Skill>) {
+    setSportForm((current) => ({
+      ...current,
+      skills: current.skills.map((skill) => (skill.id === id ? { ...skill, ...patch } : skill)),
+    }))
+  }
+
+  function deleteSportSkill(id: string) {
+    setSportForm((current) => ({ ...current, skills: current.skills.filter((skill) => skill.id !== id) }))
+  }
+
+  async function saveSport() {
+    const name = sportForm.name.trim()
+    if (!canSaveSport) return
+
+    const baseId = makeId(name)
+    const sport: Sport = {
+      id: editingSportId || (sports.some((item) => item.id === baseId) ? `${baseId}-${Date.now()}` : baseId),
+      name,
+      skills: sportForm.skills.map((skill) => ({ ...skill, label: skill.label.trim(), weight: Number(skill.weight), detail: skill.detail?.trim() || "" })),
+      positions: sportForm.positions,
+    }
+
+    setSports((current) => (
+      current.some((item) => item.id === sport.id)
+        ? current.map((item) => (item.id === sport.id ? sport : item))
+        : [...current, sport]
+    ))
+    startNewSport()
+
+    try {
+      await persist("sport", "upsert", sport)
+      setSyncError("")
+    } catch (error) {
+      setSyncError((error as Error).message)
+    }
+  }
+
+  async function deleteSport(id: string) {
+    if (id === DEFAULT_SPORT_ID) {
+      setSyncError("No se puede borrar el deporte Futbol porque es el valor por defecto")
+      return
+    }
+
+    setSports((current) => current.filter((sport) => sport.id !== id))
+    setGroups((current) => current.map((item) => (item.sportId === id ? { ...item, sportId: DEFAULT_SPORT_ID } : item)))
+
+    try {
+      await persist("sport", "delete", { id })
+      setSyncError("")
+    } catch (error) {
+      setSyncError((error as Error).message)
+    }
+  }
+
   function togglePlayerGroup(id: string) {
     setPlayerForm((current) => ({
       ...current,
@@ -508,12 +644,12 @@ export default function Home() {
       playerId: selectedPlayer.id,
       groupId: group.id,
       month,
-      scores,
+      scores: { ...emptyScores(groupSkills), ...scores },
       updatedAt: new Date().toISOString(),
     }
 
     setEvaluations((current) => [...current, evaluation])
-    setScores(emptyScores())
+    setScores(emptyScores(groupSkills))
     setSavedMessage(`Nueva clasificacion guardada · ${formatMonth(month)}`)
 
     try {
@@ -575,7 +711,7 @@ export default function Home() {
   }
 
   function generateTeams() {
-    setGeneratedTeams(buildRandomTeams(selectedTeamPlayers, evaluations, groupId, effectivePlayersPerTeam))
+    setGeneratedTeams(buildRandomTeams(selectedTeamPlayers, evaluations, groupSkills, effectivePlayersPerTeam))
   }
 
   function toggleTeamPlayer(id: string) {
@@ -601,23 +737,31 @@ export default function Home() {
           --shadow-lg: 0 28px 64px rgba(18, 21, 15, .1);
         }
         body { margin: 0; background: var(--bg); color: var(--ink); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
-        body:before { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0; background: radial-gradient(60% 45% at 12% 0%, rgba(31, 122, 77, .10), transparent 70%), radial-gradient(45% 40% at 96% 8%, rgba(234, 179, 8, .10), transparent 70%); }
-        button, input, select { font: inherit; }
+        body:before { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0; background: radial-gradient(60% 45% at 12% 0%, rgba(31, 122, 77, .13), transparent 70%), radial-gradient(45% 40% at 96% 8%, rgba(234, 179, 8, .13), transparent 70%), linear-gradient(135deg, rgba(255,255,255,.7), transparent 38%); }
+        button, input, select, textarea { font: inherit; }
         button { -webkit-tap-highlight-color: transparent; }
         main { position: relative; z-index: 1; min-height: 100vh; padding: 32px 24px 56px; }
         .shell { max-width: 1280px; margin: 0 auto; }
-        .landing { min-height: calc(100vh - 88px); max-width: 1080px; margin: 0 auto; display: grid; align-content: center; gap: 32px; }
-        .landing-hero { display: grid; gap: 16px; max-width: 780px; }
+        .landing { min-height: calc(100vh - 88px); max-width: 1180px; margin: 0 auto; display: grid; align-content: center; gap: 28px; }
+        .landing-hero { display: grid; gap: 16px; max-width: 820px; }
         .landing-hero h1 { font-size: clamp(52px, 10vw, 112px); letter-spacing: -.055em; }
         .landing-hero p { font-size: 19px; line-height: 1.5; max-width: 620px; margin: 0; }
+        .landing-top { display: flex; justify-content: space-between; gap: 18px; align-items: end; }
+        .stat-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; min-width: min(420px, 100%); }
+        .stat-card { border: 1px solid rgba(18,21,15,.08); border-radius: 22px; padding: 16px; background: rgba(255,255,255,.72); box-shadow: var(--shadow-sm); backdrop-filter: blur(14px); }
+        .stat-card strong { display: block; font-size: 30px; letter-spacing: -.04em; }
+        .stat-card small { color: var(--ink-soft); font-size: 11px; font-weight: 850; letter-spacing: .1em; text-transform: uppercase; }
         .group-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
-        .group-card { position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 28px; background: var(--surface); color: var(--ink); padding: 24px; min-height: 186px; cursor: pointer; text-align: left; box-shadow: var(--shadow-md); display: flex; flex-direction: column; justify-content: space-between; gap: 22px; transition: transform .2s cubic-bezier(.2,.7,.3,1), box-shadow .2s, border-color .2s; }
-        .group-card:before { content: ""; position: absolute; inset: auto -30% -55% auto; width: 190px; height: 190px; border-radius: 50%; background: var(--accent-soft); transition: transform .25s; }
+        .group-card { position: relative; overflow: hidden; border: 1px solid rgba(18,21,15,.08); border-radius: 30px; background: linear-gradient(145deg, #fff, #fafbf7); color: var(--ink); padding: 24px; min-height: 196px; cursor: pointer; text-align: left; box-shadow: var(--shadow-md); display: flex; flex-direction: column; justify-content: space-between; gap: 22px; transition: transform .2s cubic-bezier(.2,.7,.3,1), box-shadow .2s, border-color .2s; }
+        .group-card:before { content: ""; position: absolute; inset: auto -34% -58% auto; width: 210px; height: 210px; border-radius: 50%; background: linear-gradient(135deg, rgba(31,122,77,.14), rgba(234,179,8,.13)); transition: transform .25s; }
         .group-card > * { position: relative; }
         .group-card:hover { transform: translateY(-4px); box-shadow: var(--shadow-lg); border-color: rgba(18, 21, 15, .35); }
         .group-card:hover:before { transform: scale(1.25); }
         .group-card strong { display: block; font-size: 34px; letter-spacing: -.03em; margin-top: 6px; }
         .group-card small { color: var(--ink-soft); font-weight: 700; }
+        .group-meta { display: flex; flex-wrap: wrap; gap: 7px; }
+        .badge { display: inline-flex; align-items: center; border-radius: 999px; background: #f1f3ec; color: var(--ink-soft); padding: 7px 10px; font-size: 12px; font-weight: 850; line-height: 1; }
+        .badge.dark { background: var(--ink); color: #fff; }
         .top-actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; justify-content: flex-end; }
         .hero { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; margin-bottom: 22px; }
         .hero h1 { letter-spacing: -.045em; }
@@ -654,24 +798,34 @@ export default function Home() {
         .player > span:last-child { font-weight: 850; font-variant-numeric: tabular-nums; }
         .layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 18px; align-items: start; }
         .stack { display: grid; gap: 18px; min-width: 0; }
-        .admin { display: grid; grid-template-columns: 1fr 1.35fr; gap: 26px; margin-top: 22px; padding-top: 22px; border-top: 1px solid var(--line); }
-        .admin-panel { min-width: 0; }
-        .admin-shell { margin-top: 4px; }
+        .admin { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 22px; }
+        .admin-panel { min-width: 0; border: 1px solid var(--line); border-radius: 24px; background: linear-gradient(180deg, #fff, #fafbf7); padding: 18px; box-shadow: var(--shadow-sm); }
+        .admin-panel.accent { background: linear-gradient(180deg, #ffffff, #f5fbf7); border-color: #d9eadf; }
+        .admin-panel.gold { background: linear-gradient(180deg, #ffffff, #fffaf0); border-color: #efe2bf; }
+        .module-head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 18px; }
+        .module-icon { width: 42px; height: 42px; flex: 0 0 auto; border-radius: 15px; display: grid; place-items: center; background: var(--ink); color: #fff; font-size: 20px; font-weight: 900; }
+        .module-head h1 { margin-bottom: 4px; }
+        .module-head p { margin: 0; color: var(--ink-soft); font-size: 13px; line-height: 1.4; }
+        .admin-shell { margin-top: 4px; background: rgba(255,255,255,.8); backdrop-filter: blur(14px); }
         .admin-shell summary { cursor: pointer; list-style: none; font-size: 13px; font-weight: 850; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); display: flex; justify-content: space-between; align-items: center; }
         .admin-shell summary::-webkit-details-marker { display: none; }
         .admin-shell summary:after { content: "+"; width: 30px; height: 30px; border-radius: 50%; background: #f1f3ec; color: var(--ink); font-size: 17px; display: grid; place-items: center; transition: background .15s; }
         .admin-shell summary:hover:after { background: var(--ink); color: #fff; }
         .admin-shell[open] summary:after { content: "−"; }
-        .admin-row { background: #fafbf7; }
+        .admin-row { background: #fafbf7; border-color: #edf0e7; }
+        .admin-row.stack-row { align-items: stretch; flex-direction: column; }
+        .admin-row:hover { background: var(--surface); border-color: #d9ded1; }
+        .module-divider { height: 1px; background: var(--line); margin: 18px 0; }
         .profile-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
         .rating { width: 110px; height: 110px; flex: 0 0 auto; border-radius: 26px; color: #fff; display: grid; place-items: center; font-size: 40px; font-weight: 850; font-variant-numeric: tabular-nums; letter-spacing: -.04em; box-shadow: inset 0 -20px 36px rgba(0,0,0,.14); }
         .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
         .pill { display: inline-flex; border-radius: 8px; background: #f1f3ec; color: #4a5246; padding: 7px 10px; font-size: 12px; font-weight: 750; }
-        .skill-current, .rate-row { display: grid; grid-template-columns: 150px minmax(0, 1fr) 40px; align-items: center; gap: 14px; }
+        .skill-current, .rate-row { display: grid; grid-template-columns: minmax(190px, 1.1fr) minmax(0, 1fr) 40px; align-items: center; gap: 14px; }
         .skill-current { padding: 9px 2px; border-bottom: 1px solid #f0f2ec; }
         .skill-current:last-child { border-bottom: 0; }
         .skill-name { display: grid; gap: 2px; font-size: 15px; }
         .skill-name small { color: var(--ink-soft); font-size: 11px; font-weight: 800; letter-spacing: .04em; }
+        .skill-detail { color: var(--ink-soft); font-size: 12px; font-weight: 650; line-height: 1.35; letter-spacing: 0; margin-top: 3px; }
         .bar { height: 8px; border-radius: 999px; background: #eceee6; overflow: hidden; }
         .bar span { display: block; height: 100%; background: linear-gradient(90deg, var(--ink), var(--accent)); border-radius: 999px; transition: width .35s cubic-bezier(.2,.7,.3,1); }
         .skill-current > span:last-child, .rate-row > span:last-child { text-align: right; font-weight: 850; font-variant-numeric: tabular-nums; }
@@ -692,6 +846,12 @@ export default function Home() {
         .danger { background: #fdf1f2; color: #b4324a; }
         .actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
         .actions button { padding: 8px 12px; font-size: 13px; border-radius: 10px; }
+        .skill-editor { display: grid; grid-template-columns: minmax(0, 1fr) 92px; gap: 8px; align-items: start; }
+        .skill-editor textarea, .skill-detail-input { grid-column: 1 / -1; min-height: 74px; resize: vertical; }
+        .skill-editor button { grid-column: 1 / -1; }
+        .weight-status { border-radius: 12px; padding: 10px 12px; font-size: 13px; font-weight: 800; margin: 12px 0; }
+        .weight-status.ok { color: #15653c; background: var(--accent-soft); border: 1px solid #c9e5d5; }
+        .weight-status.warn { color: #8a6116; background: #fdf7e7; border: 1px solid #f0e2bd; }
         .saved { color: #15653c; background: var(--accent-soft); border: 1px solid #c9e5d5; border-radius: 14px; padding: 12px; font-weight: 800; text-align: center; margin: 12px 0 0; }
         .error { color: #b4324a; background: #fdf1f2; border: 1px solid #f3d3d8; border-radius: 14px; padding: 12px 14px; font-weight: 750; margin: 0; }
         .warning { color: #8a6116; background: #fdf7e7; border: 1px solid #f0e2bd; border-radius: 14px; padding: 12px 14px; font-weight: 750; margin: 0; }
@@ -752,6 +912,8 @@ export default function Home() {
         @media (max-width: 980px) {
           main { padding: 18px 14px 40px; }
           .landing { min-height: calc(100vh - 58px); gap: 24px; }
+          .landing-top { align-items: stretch; flex-direction: column; }
+          .stat-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); min-width: 0; }
           .landing-hero h1 { letter-spacing: -.04em; }
           .hero { align-items: flex-start; flex-direction: column; }
           .top-actions { width: 100%; justify-content: flex-start; }
@@ -771,14 +933,27 @@ export default function Home() {
           .stars { justify-content: flex-start; }
           .stars button { font-size: 30px; padding: 4px 6px 4px 0; }
         }
+        @media (max-width: 560px) {
+          .stat-strip { grid-template-columns: 1fr; }
+          .group-card { min-height: 170px; }
+          .group-card strong { font-size: 30px; }
+          .module-head { align-items: center; }
+        }
       `}</style>
 
       {screen === "home" ? (
         <section className="landing">
-          <div className="landing-hero">
-            <p className="field-label">Skills amateur</p>
-            <h1>Elegí tu grupo</h1>
-            <p className="muted">Entrá al grupo para ver jugadores, ranking, perfiles y cargar nuevas clasificaciones.</p>
+          <div className="landing-top">
+            <div className="landing-hero">
+              <p className="field-label">Skills amateur</p>
+              <h1>Elegí tu grupo</h1>
+              <p className="muted">Entrá a un grupo para cargar jugadores, puntuar skills, ver ranking y armar equipos balanceados.</p>
+            </div>
+            <div className="stat-strip">
+              <div className="stat-card"><strong>{groups.length}</strong><small>Grupos</small></div>
+              <div className="stat-card"><strong>{players.length}</strong><small>Jugadores</small></div>
+              <div className="stat-card"><strong>{availableSports.length}</strong><small>Deportes</small></div>
+            </div>
           </div>
 
           {syncError && <p className="error">Error de base de datos: {syncError}</p>}
@@ -799,7 +974,7 @@ export default function Home() {
           {hydrated && !syncError && groups.length === 0 && (
             <div className="empty-state">
               <h2>Todavia no hay grupos</h2>
-              <p className="muted">Abri <strong>Administrar grupos y jugadores</strong>, crea tu primer grupo y despues cargá los jugadores asignandolos a ese grupo.</p>
+              <p className="muted">Creá un deporte con sus skills, después creá un grupo y cargá los jugadores dentro del grupo.</p>
             </div>
           )}
 
@@ -816,26 +991,42 @@ export default function Home() {
                       <small>Grupo</small>
                       <strong>{item.name}</strong>
                     </span>
-                    <small>{playersCount} jugadores · {evaluationsCount} clasificaciones</small>
+                    <span className="group-meta">
+                      <span className="badge dark">{availableSports.find((sport) => sport.id === (item.sportId || DEFAULT_SPORT_ID))?.name || "Deporte"}</span>
+                      <span className="badge">{playersCount} jugadores</span>
+                      <span className="badge">{evaluationsCount} clasificaciones</span>
+                    </span>
                   </button>
                 )
               })}
           </div>
 
           <details className="card admin-shell" open={hydrated && groups.length === 0}>
-            <summary>Administrar grupos y jugadores</summary>
+            <summary>Crear grupos y deportes</summary>
             <div className="admin">
-              <div className="admin-panel">
-                <h1>Grupos</h1>
+              <div className="admin-panel accent">
+                <div className="module-head">
+                  <span className="module-icon">G</span>
+                  <span>
+                    <h1>Grupos</h1>
+                    <p>Creá un grupo nuevo y elegí con qué deporte se va a puntuar.</p>
+                  </span>
+                </div>
                 <label className="field-label" htmlFor="group-name">Nombre del grupo</label>
                 <input className="input" id="group-name" placeholder="Ej: MDS" value={groupForm} onChange={(event) => setGroupForm(event.target.value)} />
+                <label className="field-label" htmlFor="group-sport">Deporte</label>
+                <select className="input" id="group-sport" value={groupSportId} onChange={(event) => setGroupSportId(event.target.value)}>
+                  {validSports.map((sport) => <option key={sport.id} value={sport.id}>{sport.name}</option>)}
+                </select>
+                {validSports.length === 0 && <p className="warning" style={{ marginBottom: 12 }}>Creá un deporte con skills que sumen 100% antes de crear grupos.</p>}
                 <button className="primary" onClick={saveGroup} type="button">{editingGroupId ? "Guardar grupo" : "Crear grupo"}</button>
-                {editingGroupId && <button className="secondary" onClick={() => { setEditingGroupId(""); setGroupForm("") }} type="button">Cancelar edicion</button>}
+                {editingGroupId && <button className="secondary" onClick={() => { setEditingGroupId(""); setGroupForm(""); setGroupSportId(DEFAULT_SPORT_ID) }} type="button">Cancelar edicion</button>}
 
+                <div className="module-divider" />
                 <div className="admin-list" style={{ marginTop: 16 }}>
                   {groups.map((item) => (
                     <div className="admin-row" key={item.id}>
-                      <span><strong>{item.name}</strong><small>{players.filter((player) => player.groups.includes(item.id)).length} jugadores</small></span>
+                      <span><strong>{item.name}</strong><small>{availableSports.find((sport) => sport.id === (item.sportId || DEFAULT_SPORT_ID))?.name || "Deporte"} · {players.filter((player) => player.groups.includes(item.id)).length} jugadores</small></span>
                       <span className="actions">
                         <button className="secondary" onClick={() => editGroup(item)} type="button">Editar</button>
                         <button className="danger" onClick={() => deleteGroup(item.id)} type="button">Borrar</button>
@@ -845,48 +1036,80 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="admin-panel">
-                <h1>Jugadores</h1>
-                <label className="field-label" htmlFor="player-name">Nombre y apellido</label>
-                <input className="input" id="player-name" placeholder="Ej: MARTIN BARRIOS" value={playerForm.name} onChange={(event) => setPlayerForm((current) => ({ ...current, name: event.target.value }))} />
+              <div className="admin-panel gold">
+                <div className="module-head">
+                  <span className="module-icon">%</span>
+                  <span>
+                    <h1>Deportes</h1>
+                    <p>Definí skills y cuánto pesa cada una en el rating total.</p>
+                  </span>
+                </div>
+                <label className="field-label" htmlFor="sport-name">Nombre del deporte</label>
+                <input className="input" id="sport-name" placeholder="Ej: Padel" value={sportForm.name} onChange={(event) => setSportForm((current) => ({ ...current, name: event.target.value }))} />
+
                 <label className="field-label">Posiciones</label>
-                <div className="checks">
-                  {POSITIONS.map((position) => (
-                    <label className="check" key={position}>
-                      <input checked={playerForm.positions.includes(position)} onChange={() => togglePlayerPosition(position)} type="checkbox" />
-                      {position}
-                    </label>
+                <div className="skill-editor">
+                  <input className="input" placeholder="Ej: Drive" value={positionForm} onChange={(event) => setPositionForm(event.target.value)} />
+                  <button className="secondary" onClick={addPositionToSport} type="button">Agregar posicion</button>
+                </div>
+                <div className="group-meta" style={{ marginBottom: 14 }}>
+                  {sportForm.positions.map((position) => (
+                    <span className="badge dark" key={position}>{position} <button onClick={() => deleteSportPosition(position)} style={{ border: 0, background: "transparent", color: "inherit", cursor: "pointer", padding: "0 0 0 6px" }} type="button">x</button></span>
                   ))}
+                  {sportForm.positions.length === 0 && <span className="badge">Agregá al menos una posicion</span>}
                 </div>
 
-                <label className="field-label" style={{ marginTop: 14 }}>Asignar a grupos</label>
-                <div className="checks">
-                  {groups.map((item) => (
-                    <label className="check" key={item.id}>
-                      <input checked={playerForm.groups.includes(item.id)} onChange={() => togglePlayerGroup(item.id)} type="checkbox" />
-                      {item.name}
-                    </label>
-                  ))}
+                <label className="field-label">Agregar skill</label>
+                <div className="skill-editor">
+                  <input className="input" placeholder="Ej: Vibora" value={skillForm.label} onChange={(event) => setSkillForm((current) => ({ ...current, label: event.target.value }))} />
+                  <input className="input" min="1" max="100" placeholder="%" type="number" value={skillForm.weight} onChange={(event) => setSkillForm((current) => ({ ...current, weight: event.target.value }))} />
+                  <textarea className="input" placeholder="Detalle: qué mide este skill" value={skillForm.detail} onChange={(event) => setSkillForm((current) => ({ ...current, detail: event.target.value }))} />
+                  <button className="secondary" onClick={addSkillToSport} type="button">Agregar skill</button>
                 </div>
 
-                <button className="primary" onClick={savePlayer} type="button">{editingPlayerId ? "Guardar jugador" : "Crear jugador"}</button>
-                {editingPlayerId && <button className="secondary" onClick={() => { setEditingPlayerId(""); setPlayerForm(blankPlayerForm()) }} type="button">Cancelar edicion</button>}
+                <div className={`weight-status ${sportFormTotal === 100 ? "ok" : "warn"}`}>
+                  Total {sportFormTotal}% {sportFormTotal === 100 ? "· listo para guardar" : sportFormTotal > 100 ? `· bajá ${sportFormTotal - 100}%` : `· faltan ${100 - sportFormTotal}%`}
+                </div>
 
-                <div className="admin-list" style={{ marginTop: 16 }}>
-                  {players.map((player) => (
-                    <div className="admin-row" key={player.id}>
+                <div className="admin-list">
+                  {sportForm.skills.map((skill) => (
+                    <div className="admin-row stack-row" key={skill.id}>
+                      <span className="group-meta">
+                        <span className="badge dark">{skill.weight}%</span>
+                        <span className="badge">{skill.label}</span>
+                      </span>
                       <span>
-                        <strong>{player.name}</strong>
-                        <small>{player.positions.join(", ") || "Sin posicion"} · {player.groups.map((id) => groups.find((item) => item.id === id)?.name).filter(Boolean).join(", ") || "Sin grupo"}</small>
+                        <input className="input" style={{ marginBottom: 6 }} value={skill.label} onChange={(event) => updateSportSkill(skill.id, { label: event.target.value })} />
+                        <input className="input" min="1" max="100" type="number" value={skill.weight} onChange={(event) => updateSportSkill(skill.id, { weight: Number(event.target.value) })} />
+                        <textarea className="input skill-detail-input" placeholder="Detalle del skill" value={skill.detail || ""} onChange={(event) => updateSportSkill(skill.id, { detail: event.target.value })} />
                       </span>
                       <span className="actions">
-                        <button className="secondary" onClick={() => editPlayer(player)} type="button">Editar</button>
-                        <button className="danger" onClick={() => deletePlayer(player.id)} type="button">Borrar</button>
+                        <button className="danger" onClick={() => deleteSportSkill(skill.id)} type="button">Borrar</button>
                       </span>
                     </div>
                   ))}
                 </div>
+
+                <button className="primary" disabled={!canSaveSport} onClick={saveSport} type="button">{editingSportId ? "Guardar deporte" : "Crear deporte"}</button>
+                {(editingSportId || sportForm.name || sportForm.skills.length > 0) && <button className="secondary" onClick={startNewSport} type="button">Cancelar</button>}
+
+                <div className="module-divider" />
+                <div className="admin-list" style={{ marginTop: 16 }}>
+                  {availableSports.map((sport) => {
+                    const total = skillTotal(sport.skills)
+                    return (
+                      <div className="admin-row" key={sport.id}>
+                        <span><strong>{sport.name}</strong><small>{sport.skills.length} skills · {sport.positions?.length || 0} posiciones · {total}%</small></span>
+                        <span className="actions">
+                          <button className="secondary" onClick={() => editSport(sport)} type="button">Editar</button>
+                          <button className="danger" disabled={sport.id === DEFAULT_SPORT_ID} onClick={() => deleteSport(sport.id)} type="button">Borrar</button>
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
+
             </div>
           </details>
         </section>
@@ -912,6 +1135,62 @@ export default function Home() {
         </header>
 
         {syncError && <p className="error" style={{ marginBottom: 18 }}>Error de base de datos: {syncError}</p>}
+
+        <details className="card admin-shell" style={{ marginBottom: 18 }}>
+          <summary>Jugadores del grupo</summary>
+          <div className="admin" style={{ gridTemplateColumns: "minmax(0, .85fr) minmax(0, 1.15fr)" }}>
+            <div className="admin-panel">
+              <div className="module-head">
+                <span className="module-icon">J</span>
+                <span>
+                  <h1>{editingPlayerId ? "Editar jugador" : "Crear jugador"}</h1>
+                  <p>Los jugadores creados acá quedan asignados automáticamente a {group?.name || "este grupo"}.</p>
+                </span>
+              </div>
+              <label className="field-label" htmlFor="group-player-name">Nombre y apellido</label>
+              <input className="input" id="group-player-name" placeholder="Ej: MARTIN BARRIOS" value={playerForm.name} onChange={(event) => setPlayerForm((current) => ({ ...current, name: event.target.value }))} />
+              <label className="field-label">Posiciones</label>
+              <div className="checks">
+                {groupPositions.map((position) => (
+                  <label className="check" key={position}>
+                    <input checked={playerForm.positions.includes(position)} onChange={() => togglePlayerPosition(position)} type="checkbox" />
+                    {position}
+                  </label>
+                ))}
+              </div>
+              <button className="primary" onClick={savePlayer} type="button">{editingPlayerId ? "Guardar jugador" : "Crear jugador"}</button>
+              {editingPlayerId && <button className="secondary" onClick={() => { setEditingPlayerId(""); setPlayerForm(blankPlayerForm()) }} type="button">Cancelar edicion</button>}
+            </div>
+
+            <div className="admin-panel accent">
+              <div className="module-head">
+                <span className="module-icon">{groupPlayers.length}</span>
+                <span>
+                  <h1>Plantel</h1>
+                  <p>Editá posiciones o borrá jugadores cargados en este grupo.</p>
+                </span>
+              </div>
+              {groupPlayers.length === 0 ? (
+                <p className="muted">Todavía no hay jugadores en este grupo.</p>
+              ) : (
+                <div className="admin-list">
+                  {groupPlayers.map((player) => (
+                    <div className="admin-row" key={player.id}>
+                      <span>
+                        <strong>{player.name}</strong>
+                        <small>{player.positions.join(", ") || "Sin posicion"}</small>
+                      </span>
+                      <span className="actions">
+                        <button className="secondary" onClick={() => editPlayer(player)} type="button">Editar</button>
+                        <button className="danger" onClick={() => deletePlayer(player.id)} type="button">Borrar</button>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </details>
 
         <div className="card">
           <div className="card-head">
@@ -960,7 +1239,7 @@ export default function Home() {
           <p className="field-label">Quiénes juegan ({selectedTeamPlayers.length} seleccionados)</p>
           <div className="team-select">
             {groupPlayers.map((player) => {
-              const rating = latestPlayerRating(player.id, evaluations)
+              const rating = latestPlayerRating(player.id, evaluations, groupSkills)
 
               return (
                 <button className={`team-chip ${selectedTeamPlayerIds.includes(player.id) ? "active" : ""}`} key={player.id} onClick={() => toggleTeamPlayer(player.id)} type="button">
@@ -1040,9 +1319,13 @@ export default function Home() {
 
               <h3>Promedio por skill</h3>
               <div className="current">
-                {averageScores ? SKILLS.map((skill) => (
+                {averageScores ? groupSkills.map((skill) => (
                   <div className="skill-current" key={skill.id}>
-                    <strong className="skill-name"><span>{skill.label}</span><small>{skill.weight}% del total</small></strong>
+                    <strong className="skill-name">
+                      <span>{skill.label}</span>
+                      <small>{skill.weight}% del total</small>
+                      {skill.detail && <span className="skill-detail">{skill.detail}</span>}
+                    </strong>
                     <div className="bar"><span style={{ width: `${((averageScores[skill.id] || 0) / 5) * 100}%` }} /></div>
                     <span>{averageScores[skill.id]}</span>
                   </div>
@@ -1098,9 +1381,13 @@ export default function Home() {
             <p className="muted">Las estrellas parten de la última clasificación cargada. Al guardar se crea una nueva y se recalcula el promedio.</p>
 
             <div className="form" style={{ marginTop: 18 }}>
-              {SKILLS.map((skill) => (
+              {groupSkills.map((skill) => (
                 <div className="rate-row" key={skill.id}>
-                  <strong className="skill-name"><span>{skill.label}</span><small>{skill.weight}% del total</small></strong>
+                  <strong className="skill-name">
+                    <span>{skill.label}</span>
+                    <small>{skill.weight}% del total</small>
+                    {skill.detail && <span className="skill-detail">{skill.detail}</span>}
+                  </strong>
                   <div className="stars">
                     {[1, 2, 3, 4, 5].map((value) => (
                       <button className={value <= scores[skill.id] ? "on" : ""} key={value} onClick={() => setScores((current) => ({ ...current, [skill.id]: value }))} type="button" aria-label={`${value} estrellas`}>
