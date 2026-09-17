@@ -156,6 +156,11 @@ function ratingColor(value: number) {
   return "#64748b"
 }
 
+function ratingBucket(value: number) {
+  if (value <= 0) return 0
+  return Math.min(10, Math.max(1, Math.round(value / 10)))
+}
+
 function latestPlayerEvaluation(playerId: string, evaluations: Evaluation[]) {
   return evaluations
     .filter((evaluation) => evaluation.playerId === playerId)
@@ -1214,7 +1219,7 @@ export default function Home() {
                       <strong>{item.player.name}</strong>
                       <small>{item.player.positions.join(", ") || "Sin posicion"} · {item.count} {item.count === 1 ? "clasificacion" : "clasificaciones"}</small>
                     </span>
-                    <span className="rank-total" style={{ background: ratingColor(item.rating) }}>{item.rating || "-"}</span>
+                    <span className="rank-total" style={{ background: ratingColor(item.rating) }}>{item.rating ? ratingBucket(item.rating) : "-"}</span>
                   </button>
                 ))}
             </div>
@@ -1244,7 +1249,7 @@ export default function Home() {
               return (
                 <button className={`team-chip ${selectedTeamPlayerIds.includes(player.id) ? "active" : ""}`} key={player.id} onClick={() => toggleTeamPlayer(player.id)} type="button">
                   {player.name}
-                  <small>{player.positions.join(", ") || "Sin posicion"} · {rating}</small>
+                  <small>{player.positions.join(", ") || "Sin posicion"} · {ratingBucket(rating)}</small>
                 </button>
               )
             })}
@@ -1258,7 +1263,7 @@ export default function Home() {
                 {generatedTeams.teamA.map((item) => (
                   <div className="team-player" key={item.player.id}>
                     <span><strong>{item.player.name}</strong><small>{item.player.positions.join(", ") || "Sin posicion"}</small></span>
-                    <strong>{item.rating}</strong>
+                    <strong>{ratingBucket(item.rating)}</strong>
                   </div>
                 ))}
               </div>
@@ -1269,7 +1274,7 @@ export default function Home() {
                 {generatedTeams.teamB.map((item) => (
                   <div className="team-player" key={item.player.id}>
                     <span><strong>{item.player.name}</strong><small>{item.player.positions.join(", ") || "Sin posicion"}</small></span>
-                    <strong>{item.rating}</strong>
+                    <strong>{ratingBucket(item.rating)}</strong>
                   </div>
                 ))}
               </div>
