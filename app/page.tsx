@@ -251,7 +251,8 @@ export default function Home() {
   const [skillForm, setSkillForm] = useState({ label: "", weight: "", detail: "" })
   const [positionForm, setPositionForm] = useState("")
   const [savedMessage, setSavedMessage] = useState("")
-  const [screen, setScreen] = useState<"home" | "group" | "player">("home")
+  const [screen, setScreen] = useState<"home" | "group" | "player" | "evaluation">("home")
+  const [isPlayerSummaryOpen, setIsPlayerSummaryOpen] = useState(false)
   const [playersPerTeam, setPlayersPerTeam] = useState(5)
   const [selectedTeamPlayerIds, setSelectedTeamPlayerIds] = useState<string[]>([])
   const [generatedTeams, setGeneratedTeams] = useState<GeneratedTeams | null>(null)
@@ -386,7 +387,7 @@ export default function Home() {
   }, [applyUrl])
 
   useEffect(() => {
-    if (screen === "player" && selectedPlayer) document.title = `${selectedPlayer.name} · Futbol Amateur`
+    if ((screen === "player" || screen === "evaluation") && selectedPlayer) document.title = `${selectedPlayer.name} · Futbol Amateur`
     else if (screen === "group" && group) document.title = `${group.name} · Futbol Amateur`
     else document.title = "Futbol Amateur"
   }, [screen, group, selectedPlayer])
@@ -402,7 +403,7 @@ export default function Home() {
   }, [groups, groupId, screen])
 
   useEffect(() => {
-    if (screen !== "player") return
+    if (screen !== "player" && screen !== "evaluation") return
     if (!groupPlayers.length) return
 
     if (!groupPlayers.some((player) => player.id === selectedPlayerId)) {
@@ -413,7 +414,6 @@ export default function Home() {
 
   useEffect(() => {
     setScores({ ...emptyScores(groupSkills), ...(latestEvaluation?.scores || {}) })
-    setSavedMessage("")
   }, [latestEvaluation?.id, selectedPlayer?.id, groupId, groupSkills])
 
   useEffect(() => {
@@ -653,17 +653,16 @@ export default function Home() {
       updatedAt: new Date().toISOString(),
     }
 
-    setEvaluations((current) => [...current, evaluation])
-    setScores(emptyScores(groupSkills))
-    setSavedMessage(`Nueva clasificacion guardada · ${formatMonth(month)}`)
-
     try {
       await persist("evaluation", "upsert", evaluation)
+      setEvaluations((current) => [...current, evaluation])
+      setScores(emptyScores(groupSkills))
+      setSavedMessage("Clasificacion guardada correctamente. Podras volver a clasificar a este jugador dentro de 7 dias.")
       setSyncError("")
+      setScreen("player")
+      window.scrollTo({ top: 0 })
     } catch (error) {
-      setEvaluations((current) => current.filter((item) => item.id !== evaluation.id))
       setSyncError((error as Error).message)
-      setSavedMessage("")
     }
   }
 
@@ -682,6 +681,7 @@ export default function Home() {
     setScreen("player")
     setCopiedLink(false)
     setSavedMessage("")
+    setIsPlayerSummaryOpen(false)
     window.history.pushState({}, "", buildPath(groupId, id))
     window.scrollTo({ top: 0 })
   }
@@ -690,6 +690,17 @@ export default function Home() {
     setScreen("group")
     setCopiedLink(false)
     window.history.pushState({}, "", buildPath(groupId))
+  }
+
+  function startEvaluation() {
+    setSavedMessage("")
+    setScreen("evaluation")
+    window.scrollTo({ top: 0 })
+  }
+
+  function backToPlayer() {
+    setScreen("player")
+    window.scrollTo({ top: 0 })
   }
 
   function goHome() {
@@ -877,8 +888,8 @@ export default function Home() {
         .rank-total { min-width: 58px; height: 58px; border-radius: 18px; color: #fff; display: grid; place-items: center; font-size: 22px; font-weight: 900; font-variant-numeric: tabular-nums; box-shadow: inset 0 -14px 24px rgba(0,0,0,.12); }
         .back { border: 0; background: transparent; color: var(--ink-soft); padding: 0; margin-bottom: 10px; font-weight: 850; cursor: pointer; }
         .back:hover { color: var(--ink); }
-        .player-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 480px); gap: 18px; align-items: start; }
-        .new-rating { position: sticky; top: 20px; }
+        .profile-total { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+        .summary-toggle { margin-top: 18px; width: 100%; }
         .of-total { color: var(--ink-soft); font-size: .42em; letter-spacing: -.02em; margin-left: 4px; }
         .chart { position: relative; height: 300px; display: flex; align-items: end; gap: 10px; padding: 28px 12px 26px; border: 1px solid var(--line); border-radius: 18px; background: linear-gradient(180deg, #fafbf7, #fff); overflow-x: auto; }
         .chart-col { min-width: 46px; height: 100%; display: grid; grid-template-rows: 24px 1fr 20px; gap: 6px; align-items: end; justify-items: center; }
@@ -887,10 +898,6 @@ export default function Home() {
         .chart-bar { width: 100%; border-radius: 12px 12px 0 0; transition: height .35s cubic-bezier(.2,.7,.3,1); }
         .chart-average { position: absolute; left: 12px; right: 12px; height: 1px; background: rgba(18, 21, 15, .38); pointer-events: none; }
         .chart-average span { position: absolute; right: 0; bottom: 6px; border-radius: 999px; background: var(--ink); color: #fff; padding: 5px 8px; font-size: 11px; font-weight: 850; }
-        .history-list { display: grid; gap: 8px; margin-top: 14px; }
-        .history-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; border: 1px solid var(--line); border-radius: 14px; background: #fafbf7; padding: 10px 12px; }
-        .history-row small { display: block; color: var(--ink-soft); font-size: 12px; margin-top: 2px; }
-        .history-score { min-width: 44px; height: 38px; border-radius: 12px; color: #fff; display: grid; place-items: center; font-weight: 900; font-variant-numeric: tabular-nums; }
         .teams-card { margin-top: 18px; }
         .team-select { display: grid; grid-template-columns: repeat(auto-fit, minmax(146px, 1fr)); gap: 8px; margin-top: 4px; }
         .team-chip { border: 1px solid var(--line); border-radius: 12px; background: #fafbf7; color: var(--ink); padding: 10px 12px; cursor: pointer; text-align: left; font-size: 14px; font-weight: 800; transition: transform .15s, background .15s, border-color .15s, box-shadow .15s; }
@@ -1288,14 +1295,17 @@ export default function Home() {
       <div className="shell">
         <header className="hero">
           <div>
-            <button className="back" onClick={backToGroup} type="button">&lt; {group?.name || "Volver"}</button>
+            <button className="back" onClick={screen === "evaluation" ? backToPlayer : backToGroup} type="button">&lt; {screen === "evaluation" ? selectedPlayer?.name || "Jugador" : group?.name || "Volver"}</button>
             <h1>{selectedPlayer?.name || "Jugador"}</h1>
             <p className="muted">{selectedPlayer?.positions.join(", ") || "Sin posicion"}</p>
           </div>
           <div className="top-actions">
-            <button className={`secondary ${copiedLink ? "ok" : ""}`} onClick={copyCurrentLink} type="button">
-              {copiedLink ? "Link copiado" : "Copiar link"}
-            </button>
+            {screen === "player" && <>
+              <button className={`secondary ${copiedLink ? "ok" : ""}`} onClick={copyCurrentLink} type="button">
+                {copiedLink ? "Link copiado" : "Copiar link"}
+              </button>
+              <button className="secondary dark" onClick={startEvaluation} type="button">Nueva clasificacion</button>
+            </>}
             <div className="summary">
               <span>{classificationCount} clasificaciones</span>
               <span>Puesto {ranking.findIndex((item) => item.player.id === selectedPlayer?.id) + 1} de {ranking.length}</span>
@@ -1305,37 +1315,42 @@ export default function Home() {
 
         {syncError && <p className="error" style={{ marginBottom: 18 }}>Error de base de datos: {syncError}</p>}
 
-        <div className="player-layout">
-          <div className="stack">
+        {screen === "player" ? <div className="stack">
             <div className="card">
-              <div className="profile-head">
+              <div className="profile-total">
                 <div>
                   <p className="field-label">Puntaje total</p>
                   <h2>{currentRating || "-"}<span className="of-total">/100</span></h2>
                   <p className="muted">Promedio de {classificationCount} {classificationCount === 1 ? "clasificacion" : "clasificaciones"}</p>
-                  <div className="pills">
-                    {historyBest > 0 && <span className="pill">Mejor: {historyBest}</span>}
-                    {historyWorst > 0 && <span className="pill">Peor: {historyWorst}</span>}
-                    {latestEvaluation && <span className="pill">Ultima: {formatMonth(latestEvaluation.month)}</span>}
-                  </div>
                 </div>
                 <div className="rating" style={{ background: ratingColor(currentRating) }}>{currentRating || "-"}</div>
               </div>
 
-              <h3>Promedio por skill</h3>
-              <div className="current">
-                {averageScores ? groupSkills.map((skill) => (
-                  <div className="skill-current" key={skill.id}>
-                    <strong className="skill-name">
-                      <span>{skill.label}</span>
-                      <small>{skill.weight}% del total</small>
-                      {skill.detail && <span className="skill-detail">{skill.detail}</span>}
-                    </strong>
-                    <div className="bar"><span style={{ width: `${((averageScores[skill.id] || 0) / 5) * 100}%` }} /></div>
-                    <span>{averageScores[skill.id]}</span>
-                  </div>
-                )) : <p className="muted">Todavia no tiene clasificaciones guardadas.</p>}
-              </div>
+              <button className="secondary summary-toggle" onClick={() => setIsPlayerSummaryOpen((current) => !current)} type="button" aria-expanded={isPlayerSummaryOpen}>
+                {isPlayerSummaryOpen ? "Ocultar resumen" : "Ver resumen del jugador"}
+              </button>
+
+              {isPlayerSummaryOpen && <>
+                <div className="pills">
+                  {historyBest > 0 && <span className="pill">Mejor: {historyBest}</span>}
+                  {historyWorst > 0 && <span className="pill">Peor: {historyWorst}</span>}
+                  {latestEvaluation && <span className="pill">Ultima: {formatMonth(latestEvaluation.month)}</span>}
+                </div>
+                <h3>Promedio por skill</h3>
+                <div className="current">
+                  {averageScores ? groupSkills.map((skill) => (
+                    <div className="skill-current" key={skill.id}>
+                      <strong className="skill-name">
+                        <span>{skill.label}</span>
+                        <small>{skill.weight}% del total</small>
+                        {skill.detail && <span className="skill-detail">{skill.detail}</span>}
+                      </strong>
+                      <div className="bar"><span style={{ width: `${((averageScores[skill.id] || 0) / 5) * 100}%` }} /></div>
+                      <span>{averageScores[skill.id]}</span>
+                    </div>
+                  )) : <p className="muted">Todavia no tiene clasificaciones guardadas.</p>}
+                </div>
+              </>}
             </div>
 
             <div className="card">
@@ -1364,26 +1379,13 @@ export default function Home() {
                     </div>
                   </div>
 
-                  <div className="history-list">
-                    {[...playerHistory].reverse().map((item) => (
-                      <div className="history-row" key={item.evaluation.id}>
-                        <span>
-                          <strong>#{item.index} · {formatMonth(item.evaluation.month)}</strong>
-                          <small>{item.groupName} · {new Date(item.evaluation.updatedAt).toLocaleDateString("es-AR")}</small>
-                        </span>
-                        <span className="history-score" style={{ background: ratingColor(item.rating) }}>{item.rating}</span>
-                      </div>
-                    ))}
-                  </div>
                 </>
               )}
             </div>
-          </div>
-
-          <div className="card new-rating">
+          </div> : <div className="card">
             <p className="field-label">Nueva clasificacion · {group?.name} · {formatMonth(month)}</p>
             <h2>Puntuar</h2>
-            <p className="muted">Las estrellas parten de la última clasificación cargada. Al guardar se crea una nueva y se recalcula el promedio.</p>
+            <p className="muted">Las estrellas parten de la última clasificación cargada. Cada persona puede clasificar a este jugador una vez por semana.</p>
 
             <div className="form" style={{ marginTop: 18 }}>
               {groupSkills.map((skill) => (
@@ -1405,9 +1407,8 @@ export default function Home() {
               ))}
             </div>
             <button className="primary" onClick={saveEvaluation} type="button">Guardar clasificacion · {formRating}/100</button>
-            {savedMessage && <p className="saved">{savedMessage}</p>}
-          </div>
-        </div>
+          </div>}
+        {screen === "player" && savedMessage && <p className="saved">{savedMessage}</p>}
       </div>
       )}
     </main>
